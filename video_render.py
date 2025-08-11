@@ -5,42 +5,61 @@ import json
 import cv2
 import numpy as np
 import pandas as pd
+import imageio
+import datetime 
+
 from scipy.interpolate import interp1d
 
-FRAME_WIDTH  = 1088
-FRAME_HEIGHT = 1080
-FPS          = 30
+FRAME_WIDTH  = 1280
+FRAME_HEIGHT = 720
+FPS          = 60
 
 def build_color_map():
     color_map = {
         'q': (255,   0, 255),
         'w': (255, 192, 203),
-        'e': ( 68, 170,   0),
-        'r': (  0, 120,   0),
-        't': (255,   0,   0),
-        'y': (255,   0, 255),
-        'u': (  0,   0, 255),
-        '1': (  0, 255, 255),
-        '2': (255, 255,   0),
-        '3': (255, 165,   0),
+        'e': ( 0, 204, 0),
+        'r': (0,102, 0),
+        't': (255, 0, 0),
+        'y': (128, 0, 128),
+        'u': (0, 0, 255),
+        '1': (0, 255, 255),
+        '2': (255,204,0),
+        '3': (255,102,0),
         '0': (255, 255, 255),
         '7': (255, 255, 255),
         '8': (255, 255, 255),
         '9': (255, 255, 255),
     }
 
-    for k, c in list(color_map.items()):
-        color_map[f'{k}_launch'] = c
-        color_map[f'{k}_land']   = c
+    for k, v in list(color_map.items()):
+        color_map[f'{k}_launch'] = v
+        color_map[f'{k}_land']   = v
     return color_map
+    
+def build_frame_times_map():
+    frame_times = {
+        'Default': (0,6),
+        '0': (0,1),
+        '7': (0,1),
+        '8': (0,1),
+        '9': (0,1),
+        't': (0,1)
+    }
+
+    for k, v in list(frame_times.items()):
+        frame_times[f'{k}_launch'] = v
+        frame_times[f'{k}_land']   = v
+    return frame_times
 
 COLORS = build_color_map()
+FRAME_DISPLAY_TIMES = build_frame_times_map()
 
 MARKER_NAMES = {
     '0': 'T1 Begin',  '7': 'T6 End',   '8': 'T6 Begin', '9': 'T1 End',
-    'r_land': 'TRACK_AHEAD', 'e_land': 'TRACK_EDGE',    'q_land': 'REF_POINT',
-    'y_land': 'INSTRUMENTS', 'w_land': 'BR_MARKER',     '1_land': 'APEX',
-    '2_land': 'APEX',        '3_land': 'EXIT',          'u_land': 'LAF',
+    'r_land': 'TRACK_AHEAD', 'e_land': 'TRACK_EDGE',    'q_land': 'REFERENCE_POINT',
+    'y_land': 'INSTRUMENTS', 'w_land': 'BRAKE_MARKER',     '1_land': '1st_APEX_FIXATION',
+    '2_land': 'APEX_OKN',        '3_land': 'EXIT',          'u_land': 'LAF',
 }
 
 for k, v in list(MARKER_NAMES.items()):
@@ -70,8 +89,11 @@ def interpolate_gaze(gaze, world_ts):
 
 
 def get_frame_timestamps(video, cache):
-    if os.path.exists(cache):
-        return np.load(cache)
+    folder = "./movie_timestamps"
+    cache_path = os.path.join(folder, cache)
+
+    if os.path.exists(cache_path):
+        return np.load(cache_path)
 
     cap, times = cv2.VideoCapture(str(video)), []
     while True:
@@ -81,10 +103,22 @@ def get_frame_timestamps(video, cache):
         times.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
     cap.release()
     ts = np.asarray(times, float)
-    np.save(cache, ts)
+    if len(ts) > 0:
+        os.makedirs(folder, exist_ok=True)
+        np.save(cache_path, ts)
     return ts
+    
+def get_display_frames(label):
+    if label in FRAME_DISPLAY_TIMES:
+        return FRAME_DISPLAY_TIMES[label]
+    else:
+        return FRAME_DISPLAY_TIMES['Default']
 
+def get_end_frame_delta(label):
+    return get_display_frames(label)[1]
 
+def get_start_frame_delta(label):
+    return get_display_frames(label)[0]
 
 def read_markers(markers_json, video_timestamps):
     rows = []
@@ -101,7 +135,7 @@ def read_markers(markers_json, video_timestamps):
                 continue
 
             frame_idx  = int(np.argmin(np.abs(frame_ts - video_timestamps)))
-            frame_disp = frame_idx  # when frame appears on video, right now same as when annotated
+            frame_disp = frame_idx + get_start_frame_delta(key) # when frame appears on video, right now same as when annotated
 
             row = [frame_ts, key, float(pos[0]), float(pos[1]),
                    frame_idx, frame_disp]
@@ -156,12 +190,12 @@ def build_signal_loss_events(rows):
 
 def put_time_overlay(img, t, frame):
     cv2.putText(img, f'Time: {t:.2f} s', (100, 100),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (150, 150, 150), 4)
+                cv2.FONT_HERSHEY_SIMPLEX, color = (150, 150, 150), fontScale=2, thickness = 4)
     cv2.putText(img, f'Frame: {frame}', (100, 150),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (150, 150, 150), 4)
+                cv2.FONT_HERSHEY_SIMPLEX, color = (150, 150, 150), fontScale=2, thickness = 4)
 
 def put_text(img, txt, xy, col):
-    cv2.putText(img, txt, xy, cv2.FONT_HERSHEY_SIMPLEX, 1.5, col, 4)
+    cv2.putText(img, txt, xy, cv2.FONT_HERSHEY_SIMPLEX, color= col, fontScale=2, thickness = 4)
 
 
 def draw_marker(img, draw_dot, row, launch, land):
@@ -190,9 +224,13 @@ def draw_marker(img, draw_dot, row, launch, land):
 
 def render_video(video, markers,blinks, loss, out_path):
     cap   = cv2.VideoCapture(str(video))
-    vw    = cv2.VideoWriter(str(out_path),
-                            cv2.VideoWriter_fourcc(*'avc1'),
-                            FPS, (FRAME_WIDTH, FRAME_HEIGHT))
+                            
+    vw = imageio.get_writer(
+            str(out_path),
+            fps=FPS,
+            codec="libx264",
+            bitrate="2000k"
+    ) 
 
     rows_out = []
     frame_idx = blink_idx = loss_idx = m_idx = 0
@@ -208,9 +246,10 @@ def render_video(video, markers,blinks, loss, out_path):
         while frame_idx >= markers[m_idx][5]:
             r = markers[m_idx]
             m_idx += 1
+            display_time = get_end_frame_delta(r[1])
             rows_out.append([r[4], r[0], t, frame_idx/FPS,
                              r[1], r[2], r[3]])
-            active.append((3 if r[1] not in {'0','7','8','9','t'} else 1, frame_idx, r))
+            active.append((display_time, frame_idx, r))
 
         # blink / signal-loss overlays
         if blinks[blink_idx][5] <= frame_idx <= blinks[blink_idx][6]:
@@ -244,28 +283,45 @@ def render_video(video, markers,blinks, loss, out_path):
         active = next_active
 
         put_time_overlay(img, t, frame_idx)
-        vw.write(img)
+        
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        vw.append_data(img)
         frame_idx += 1
 
     cap.release()
-    vw.release()
+    vw.close()
     return rows_out
 
 def main():
 
-    vid_path = '2023-02-11-06-06-54-38_export_scanpath.mp4'
-    json_path = '2023-02-11-06-06-54-38_export_scanpath.mp4-1142.282-1294737572 20250116.json'
-    gaze_path = 'gaze_positions.csv'
-    ts_path = 'world_timestamps.csv'
+    vid_path = 'iZone Oulton Park 20250425 H264.mp4'
+    json_path = 'iZone Oulton Park 20250425 H264.mp4-117.981-30823443 20250520.json'
     
-    out_video = 'render.mp4'
-    output_csv = "naxu.csv"
+    
 
-    markers_json = load_json(json_path)
-    gaze         = load_gaze_positions(gaze_path)
-    world_ts     = np.genfromtxt(ts_path, delimiter=',')
+    
+    
+    csv_folder = "naxu_csv"
+    movie_folder = "postrender_naxu"
+    
+    os.makedirs(movie_folder, exist_ok=True)
+    os.makedirs(csv_folder, exist_ok=True)
+    
+    time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    out_video = os.path.join(movie_folder, vid_path + f"_postender_naxu_{time}.mp4")
+    output_csv = os.path.join(csv_folder, vid_path + f"_naxu_{time}.csv")
 
-    _ = interpolate_gaze(gaze, world_ts)
+    try:
+        gaze_path = 'gaze_positions.csv'
+        ts_path = 'world_timestamps.csv'
+        
+        markers_json = load_json(json_path)
+        gaze         = load_gaze_positions(gaze_path)
+        world_ts     = np.genfromtxt(ts_path, delimiter=',')
+
+        _ = interpolate_gaze(gaze, world_ts)
+    except:
+        print("No gaze data")
 
     frame_ts = get_frame_timestamps(vid_path,
                                     vid_path + ('_ts.npy'))
@@ -278,8 +334,8 @@ def main():
 
     pd.DataFrame(
         rows,
-        columns=['frame', 'naxu_time', 'video_time',
-                 'video_time_alt', 'marker_name', 'x', 'y'],
+        columns=['frame', 'timestamp', 'timestamp_alt',
+                'annotation_label', 'x', 'y', 'naxu_timestamp'],
     ).to_csv(output_csv, index=False)
 
 
