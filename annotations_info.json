@@ -3,7 +3,7 @@
         
         "r": "TRACK_AHEAD", "e": "TRACK_EDGE",    "q": "REFERENCE_POINT",
         "y": "INSTRUMENTS", "w": "BRAKE_MARKER",     "1": "1st_APEX_FIXATION",
-        "2": "APEX_OKN",        "3": "EXIT",          "u": "LAF"
+        "2": "APEX_OKN",        "3": "EXIT",          "u": "LAF", "o": "LAF"
     },
     
     "TEXT_ONLY_MARKERS": {"0": "QE_ONSET",  "7": "T6 End",   "8": "T6 Begin", "9": "QE_OFFSET"},
@@ -34,6 +34,7 @@
         "t": [255, 0, 0],
         "y": [128, 0, 128],
         "u": [0, 0, 255],
+        "o": [0, 0, 255],
         "1": [0, 255, 255],
         "2": [255,204,0],
         "3": [255,102,0],
