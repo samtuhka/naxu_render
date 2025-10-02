@@ -1,0 +1,46 @@
+{
+   "GAZE_CLASS_MARKERS": {
+        
+        "r": "TRACK_AHEAD", "e": "TRACK_EDGE",    "q": "REFERENCE_POINT",
+        "y": "INSTRUMENTS", "w": "BRAKE_MARKER",     "1": "1st_APEX_FIXATION",
+        "2": "APEX_OKN",        "3": "EXIT",          "u": "LAF"
+    },
+    
+    "TEXT_ONLY_MARKERS": {"0": "QE_ONSET",  "7": "T6 End",   "8": "T6 Begin", "9": "QE_OFFSET"},
+    
+    "POINT_ONLY_MARKERS": ["t"],
+    
+    "BLINK": "p",
+    "SIGNAL_LOSS": "i",
+    "LANDING_POINT": "4",
+    
+    "SKIP_KEYS": [],
+    
+    "FRAME_DISPLAY_TIMES": {
+        "Default": [0,12], 
+        "0": [0,20], 
+        "7": [0,1],
+        "8": [0,1],
+        "9": [0,20],
+        "t": [0,3]
+    },
+
+    "COLORMAP":
+    {
+        "q": [255,   0, 255],
+        "w": [255, 192, 203],
+        "e": [ 0, 204, 0],
+        "r": [0,102, 0],
+        "t": [255, 0, 0],
+        "y": [128, 0, 128],
+        "u": [0, 0, 255],
+        "1": [0, 255, 255],
+        "2": [255,204,0],
+        "3": [255,102,0],
+        "0": [0, 255, 0],
+        "7": [255, 255, 255],
+        "8": [255, 255, 255],
+        "9": [0, 255, 0]
+   }
+   
+}

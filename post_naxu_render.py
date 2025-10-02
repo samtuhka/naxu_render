@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import os
 import json
 import cv2
@@ -10,67 +11,49 @@ import datetime
 
 from scipy.interpolate import interp1d
 
-FRAME_WIDTH  = 1280
-FRAME_HEIGHT = 720
-FPS          = 60
-
-def build_color_map():
-    color_map = {
-        'q': (255,   0, 255),
-        'w': (255, 192, 203),
-        'e': ( 0, 204, 0),
-        'r': (0,102, 0),
-        't': (255, 0, 0),
-        'y': (128, 0, 128),
-        'u': (0, 0, 255),
-        '1': (0, 255, 255),
-        '2': (255,204,0),
-        '3': (255,102,0),
-        '0': (255, 255, 255),
-        '7': (255, 255, 255),
-        '8': (255, 255, 255),
-        '9': (255, 255, 255),
-    }
-
-    for k, v in list(color_map.items()):
-        color_map[f'{k}_launch'] = v
-        color_map[f'{k}_land']   = v
-    return color_map
+class Config:
+    frame_width = 1280
+    frame_height = 720
+    fps = 60
+        
+    def __init__(self, annotations_json_path):
     
-def build_frame_times_map():
-    frame_times = {
-        'Default': (0,6),
-        '0': (0,1),
-        '7': (0,1),
-        '8': (0,1),
-        '9': (0,1),
-        't': (0,1)
-    }
+        annotation_info = load_json(annotations_json_path)
 
-    for k, v in list(frame_times.items()):
-        frame_times[f'{k}_launch'] = v
-        frame_times[f'{k}_land']   = v
-    return frame_times
+        self.color_map = self.get_color_map(annotation_info)
+        self.frame_display_times = self.get_frame_times_map(annotation_info)
+        self.gaze_class_markers = self.get_gaze_class_markers(annotation_info)
+        self.skip_keys = annotation_info['SKIP_KEYS']
+        self.blink = annotation_info['BLINK']
+        self.signal_loss = annotation_info["SIGNAL_LOSS"]
+        self.landing_point = annotation_info['LANDING_POINT']
+        self.text_only_markers = annotation_info['TEXT_ONLY_MARKERS']
+        self.point_only_markers = annotation_info['POINT_ONLY_MARKERS']
+        
+    def add_launch_land(self, dictionary):
+        for k, v in list(dictionary.items()):
+            dictionary[f'{k}_launch'] = v
+            dictionary[f'{k}_land']   = v
+        return dictionary
 
-COLORS = build_color_map()
-FRAME_DISPLAY_TIMES = build_frame_times_map()
-
-MARKER_NAMES = {
-    '0': 'T1 Begin',  '7': 'T6 End',   '8': 'T6 Begin', '9': 'T1 End',
-    'r_land': 'TRACK_AHEAD', 'e_land': 'TRACK_EDGE',    'q_land': 'REFERENCE_POINT',
-    'y_land': 'INSTRUMENTS', 'w_land': 'BRAKE_MARKER',     '1_land': '1st_APEX_FIXATION',
-    '2_land': 'APEX_OKN',        '3_land': 'EXIT',          'u_land': 'LAF',
-}
-
-for k, v in list(MARKER_NAMES.items()):
-    if k.endswith('_land'):
-        MARKER_NAMES[k.replace('_land', '_launch')] = v
-
+    def get_color_map(self, label_info):
+        color_map = label_info['COLORMAP']
+        color_map = self.add_launch_land(color_map)
+        return color_map
+        
+    def get_frame_times_map(self, label_info):
+        frame_times = label_info['FRAME_DISPLAY_TIMES']
+        frame_times = self.add_launch_land(frame_times)
+        return frame_times
+        
+    def get_gaze_class_markers(self, label_info):
+        gaze_markers = label_info['GAZE_CLASS_MARKERS']
+        gaze_markers = self.add_launch_land(gaze_markers)
+        return gaze_markers
 
 def load_json(path):
     with open(path) as fh:
         return json.load(fh)
-
 
 def load_gaze_positions(csv_path):
     pupil = np.genfromtxt(csv_path, delimiter=',', names=True)
@@ -108,19 +91,19 @@ def get_frame_timestamps(video, cache):
         np.save(cache_path, ts)
     return ts
     
-def get_display_frames(label):
-    if label in FRAME_DISPLAY_TIMES:
-        return FRAME_DISPLAY_TIMES[label]
+def get_display_frames(cfg, label):
+    if label in cfg.frame_display_times:
+        return cfg.frame_display_times[label]
     else:
-        return FRAME_DISPLAY_TIMES['Default']
+        return cfg.frame_display_times['Default']
 
-def get_end_frame_delta(label):
-    return get_display_frames(label)[1]
+def get_end_frame_delta(cfg, label):
+    return get_display_frames(cfg, label)[1]
 
-def get_start_frame_delta(label):
-    return get_display_frames(label)[0]
+def get_start_frame_delta(cfg, label):
+    return get_display_frames(cfg, label)[0]
 
-def read_markers(markers_json, video_timestamps):
+def read_markers(cfg, markers_json, video_timestamps):
     rows = []
 
     for frame in markers_json['markers']:
@@ -131,62 +114,76 @@ def read_markers(markers_json, video_timestamps):
             key, pos = m['name'], m['position']
 
             # skip unused
-            if key in {'o', '5'}:
+            if key in cfg.skip_keys:
                 continue
 
             frame_idx  = int(np.argmin(np.abs(frame_ts - video_timestamps)))
-            frame_disp = frame_idx + get_start_frame_delta(key) # when frame appears on video, right now same as when annotated
+            frame_disp = frame_idx + get_start_frame_delta(cfg, key) # when frame appears on video, right now same as when annotated
 
-            row = [frame_ts, key, float(pos[0]), float(pos[1]),
-                   frame_idx, frame_disp]
+            row = [frame_idx, frame_ts, frame_disp, key, float(pos[0]), float(pos[1])]
 
-            if key == '4':        
+            if key == cfg.landing_point:        
                 landing = row
                 continue
 
             rows.append(row)
 
-            if key in {'q', 'w', 'e', 'r', 'y', 'u', '1', '2', '3'}:
+            if key in cfg.gaze_class_markers:
                 frame_markers.append(row)
 
         # assign launch/land
         if frame_markers and landing is not None:
             f_arr = np.asarray(frame_markers)
-            landing_xy = np.asarray(landing[2:4], float)
-            d = np.linalg.norm(f_arr[:, 2:4].astype(float) - landing_xy, axis=1)
+            landing_xy = np.asarray(landing[4:], float)
+            d = np.linalg.norm(f_arr[:, 4:].astype(float) - landing_xy, axis=1)
             if len(d) == 2:  # exactly two markers in this block
-                frame_markers[int(np.argmax(d))][1] += '_launch'
-            frame_markers[int(np.argmin(d))][1] += '_land'
+                frame_markers[int(np.argmax(d))][3] += '_launch'
+            frame_markers[int(np.argmin(d))][3] += '_land'
 
-    rows.append([np.inf, '', 0.0, 0.0, 0, np.inf])
-    rows.sort(key=lambda r: r[5])
+    rows.sort(key=lambda r: r[2]) #sort by display time
+    #rows.append([np.inf, '', 0.0, 0.0, 0, np.inf])
 
-    return rows
+    marker_df = pd.DataFrame(rows, columns=["frame", "time", "display_frame", "label", "x", "y"])
+    return marker_df
 
-def parse_pairs(rows, max_gap):
-    out, ended = [], True
-    for i in range(len(rows)):
+def parse_pairs(marker_df, mask, max_gap):
+    out = []
+    ended = True
+    masked_df = marker_df[mask]
+    idxs = masked_df.index
+    
+    for i in range(len(masked_df)):
+        start_i, end_i = idxs[i-1], idxs[i]
+
         if ended:
             ended = False
             continue
-        if rows[i][0] < rows[i-1][0] + max_gap:
+        if masked_df.iloc[i].time < masked_df.iloc[i-1].time + max_gap:
             ended = True
-            rows[i-1][1] += '_start'
-            rows[i][1] += '_end'
-            out.append(list(rows[i-1]) + [rows[i][5], True])
+            marker_df.at[start_i, "label"] += '_start'
+            marker_df.at[end_i, "label"] += '_end'
+
+            start_display_frame =  marker_df.iloc[i-1].display_frame
+            end_display_frame = marker_df.iloc[i].display_frame
+            out.append([start_display_frame, end_display_frame, True])
         else:
-            rows[i-1][1] += '_start_noEnd'
-            out.append(list(rows[i-1]) + [rows[i-1][5] + 10, False])
+            marker_df.at[start_i, "label"] += '_start_noEnd'
+
+            start_display_frame =  marker_df.iloc[i-1].display_frame
+            end_display_frame = start_display_frame + 10
+            out.append([start_display_frame, end_display_frame, False])
+            
             ended = False
-    out.append([1e6, '', 0, 0, 0, int(1e6), int(1e6), False])  # sentinel
+    out = pd.DataFrame(out, columns = ["start_frame", "end_frame", "paired"])
     return out
 
-def build_blink_events(rows):
-    return parse_pairs([r for r in rows if r[1] == 'p'], 0.4)
+def build_blink_events(cfg, marker_df):
+    blink_mask= marker_df.label == cfg.blink
+    return parse_pairs(marker_df, blink_mask, 0.4)
 
-def build_signal_loss_events(rows):
-    return parse_pairs([r for r in rows if r[1] == 'i'], 1000)
-
+def build_signal_loss_events(cfg, marker_df):
+    signal_loss_mask = marker_df.label == cfg.signal_loss
+    return parse_pairs(marker_df, signal_loss_mask, 1000)
 
 def put_time_overlay(img, t, frame):
     cv2.putText(img, f'Time: {t:.2f} s', (100, 100),
@@ -198,36 +195,44 @@ def put_text(img, txt, xy, col):
     cv2.putText(img, txt, xy, cv2.FONT_HERSHEY_SIMPLEX, color= col, fontScale=2, thickness = 4)
 
 
-def draw_marker(img, draw_dot, row, launch, land):
-    key, x_n, y_n = row[1], row[2], row[3]
-    col = COLORS.get(key, (0, 0, 0))[::-1]   # to BGR
-    x_px, y_px = int(x_n * FRAME_WIDTH), int(y_n * FRAME_HEIGHT)
+def draw_marker(cfg, img, draw_dot, marker, launch, land):
+    key, x_n, y_n = marker.label, marker.x, marker.y
+    col = cfg.color_map.get(key, (0, 0, 0))[::-1]   # to BGR
+    width, height = cfg.frame_width, cfg.frame_height
+    
+    x_px, y_px = int(x_n * width), int(y_n * height)
 
-    if key in {'0', '7', '8', '9'}:
-        put_text(img, MARKER_NAMES[key],
-                 (int(0.5*FRAME_WIDTH), int(0.75*FRAME_HEIGHT)), col)
-    elif key == 't':
+    if key in cfg.text_only_markers:
+        put_text(img, cfg.text_only_markers[key],
+                 (int(0.04*width), int(0.25*height)), col)
+    if key in cfg.point_only_markers:
         cv2.circle(img, (x_px, y_px), 5, col, -1)
         put_text(img, key, (x_px, y_px - 40), col)
-    elif key in MARKER_NAMES:
+    if key in cfg.gaze_class_markers:
         if key.endswith('_land'):
             cv2.circle(img, (x_px, y_px), 29, col, 2)
-            put_text(img, MARKER_NAMES[key], (x_px, y_px - 40), col)
+            put_text(img, cfg.gaze_class_markers[key], (x_px, y_px - 40), col)
         if draw_dot:
             cv2.circle(img, (x_px, y_px), 5, col, -1)
                     
-            if launch and land:
-                p1 = (int(launch[2]*FRAME_WIDTH), int(launch[3]*FRAME_HEIGHT))
-                p2 = (int(land[2]*FRAME_WIDTH),  int(land[3]*FRAME_HEIGHT))
-                cv2.line(img, p1, p2, COLORS[land[1]][::-1], 1)
+            if launch is not None and land is not None:
+                p1 = (int(launch.x*width), int(launch.y*height))
+                p2 = (int(land.x*width),  int(land.y*height))
+                land_color = cfg.color_map.get(launch.label, (0, 0, 0))[::-1]   # to BGR
+                cv2.line(img, p1, p2, land_color, 1)
 
+def save_csv(rows, cols, out_path):
+    pd.DataFrame(
+        rows,
+        columns = cols,
+    ).to_csv(out_path, index=False)
 
-def render_video(video, markers,blinks, loss, out_path):
+def render_video(cfg, video, markers, blinks, signal_losses, out_path):
     cap   = cv2.VideoCapture(str(video))
                             
     vw = imageio.get_writer(
             str(out_path),
-            fps=FPS,
+            fps=cfg.fps,
             codec="libx264",
             bitrate="2000k"
     ) 
@@ -240,49 +245,57 @@ def render_video(video, markers,blinks, loss, out_path):
         ret, img = cap.read()
         if not ret:
             break
-        t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        ts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+        #put_text(img,"Label Position",(int(0.04*FRAME_WIDTH), int(0.25*FRAME_HEIGHT)), (255,255,255))
 
         # activate new markers
-        while frame_idx >= markers[m_idx][5]:
-            r = markers[m_idx]
+        while (m_idx < len(markers)) and (frame_idx >= markers.iloc[m_idx].display_frame):
+            marker = markers.iloc[m_idx]
             m_idx += 1
-            display_time = get_end_frame_delta(r[1])
-            rows_out.append([r[4], r[0], t, frame_idx/FPS,
-                             r[1], r[2], r[3]])
-            active.append((display_time, frame_idx, r))
+            display_time = get_end_frame_delta(cfg, marker.label)
+            rows_out.append([marker.frame, marker.time, ts, frame_idx/cfg.fps,
+                             marker.label, marker.x, marker.y])
+            active.append((display_time, frame_idx, marker))
 
         # blink / signal-loss overlays
-        if blinks[blink_idx][5] <= frame_idx <= blinks[blink_idx][6]:
-            put_text(img, 'BLINK' + ('' if blinks[blink_idx][7] else ' (NO END)'),
-                     (int(0.55*FRAME_WIDTH), int(0.75*FRAME_HEIGHT)), (150,150,150))
-        elif frame_idx > blinks[blink_idx][6]:
-            blink_idx += 1
-
-        if loss[loss_idx][5] <= frame_idx <= loss[loss_idx][6]:
-            put_text(img, 'SIGNAL LOSS',
-                     (int(0.55*FRAME_WIDTH), int(0.75*FRAME_HEIGHT)), (150,150,150))
-        elif frame_idx > loss[loss_idx][6]:
-            loss_idx += 1
+        if blink_idx < len(blinks):
+            blink = blinks.iloc[blink_idx]
+            if blink.start_frame <= frame_idx <= blink.end_frame:
+                put_text(img, 'BLINK' + ('' if blink.paired else ' (NO END)'),
+                        (int(0.55*cfg.frame_width), int(0.75*cfg.frame_height)), (150,150,150))
+            elif frame_idx > blink.end_frame:
+                blink_idx += 1
+        if loss_idx < len(signal_losses):
+            loss = signal_losses.iloc[loss_idx]
+            if loss.start_frame <= frame_idx <= loss.end_frame:
+                put_text(img, 'SIGNAL LOSS',
+                        (int(0.55*cfg.frame_width), int(0.75*cfg.frame_height)), (150,150,150))
+            elif frame_idx > loss.end_frame:
+                loss_idx += 1
 
         # draw markers
         next_active, launch, land = [], None, None
-        for ttl, fr, r in active:
-            k = r[1]
-            if k in {'p', 'p_start', 'p_end', 'p_start_noEnd', 'i', 'i_start', 'i_end', 'i_start_noEnd'}:
+        for frames_to_live, marker_frame, marker in active:
+            key = marker.label
+            if key[0] in [cfg.blink, cfg.signal_loss]:
                 continue
-            if k.endswith('_launch'):
-                launch = r
-            elif k.endswith('_land'):
-                land = r
+            if key.endswith('_launch'):
+                launch = marker
+            elif key.endswith('_land'):
+                land = marker
 
-            draw_dot = fr == frame_idx
-            draw_marker(img, draw_dot, r, launch, land)
-            if ttl > 1:
-                next_active.append((ttl-1, fr, r))
+            draw_dot = marker_frame == frame_idx
+            draw_marker(cfg, img, draw_dot, marker, launch, land)
+            if frames_to_live > 1:
+                next_active.append((frames_to_live-1, marker_frame, marker))
 
         active = next_active
 
-        put_time_overlay(img, t, frame_idx)
+        #put_time_overlay(img, t, frame_idx)
+                
+        #cv2.imshow("Test", img)
+        #cv2.waitKey(1)
         
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         vw.append_data(img)
@@ -292,14 +305,9 @@ def render_video(video, markers,blinks, loss, out_path):
     vw.close()
     return rows_out
 
-def main():
-
-    vid_path = 'iZone Oulton Park 20250425 H264.mp4'
-    json_path = 'iZone Oulton Park 20250425 H264.mp4-117.981-30823443 20250520.json'
+def main(video_path, naxu_json_path, config_json_path):
     
-    
-
-    
+    cfg = Config(config_json_path)
     
     csv_folder = "naxu_csv"
     movie_folder = "postrender_naxu"
@@ -308,14 +316,12 @@ def main():
     os.makedirs(csv_folder, exist_ok=True)
     
     time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    out_video = os.path.join(movie_folder, vid_path + f"_postender_naxu_{time}.mp4")
-    output_csv = os.path.join(csv_folder, vid_path + f"_naxu_{time}.csv")
+    out_video = os.path.join(movie_folder, video_path + f"_postnaxu_render_{time}.mp4")
+    output_csv = os.path.join(csv_folder, video_path + f"_naxu_{time}.csv")
 
     try:
         gaze_path = 'gaze_positions.csv'
         ts_path = 'world_timestamps.csv'
-        
-        markers_json = load_json(json_path)
         gaze         = load_gaze_positions(gaze_path)
         world_ts     = np.genfromtxt(ts_path, delimiter=',')
 
@@ -323,21 +329,30 @@ def main():
     except:
         print("No gaze data")
 
-    frame_ts = get_frame_timestamps(vid_path,
-                                    vid_path + ('_ts.npy'))
-    markers  = read_markers(markers_json, frame_ts)
-    blinks   = build_blink_events(markers)
-    loss     = build_signal_loss_events(markers)
+    frame_ts = get_frame_timestamps(video_path,
+                                    video_path + ('_ts.npy'))
+                                    
+    markers_json = load_json(naxu_json_path)
+    markers  = read_markers(cfg, markers_json, frame_ts)
+    blinks   = build_blink_events(cfg, markers)
+    loss     = build_signal_loss_events(cfg, markers)
 
-    rows = render_video(vid_path, markers, blinks, loss,
+    rows = render_video(cfg, video_path, markers, blinks, loss,
                         out_video)
-
-    pd.DataFrame(
-        rows,
-        columns=['frame', 'timestamp', 'timestamp_alt',
-                'annotation_label', 'x', 'y', 'naxu_timestamp'],
-    ).to_csv(output_csv, index=False)
-
+    csv_columns = ['frame', 'naxu_timestamp', 'timestamp', 'timestamp_alt', 
+                'annotation_label', 'x', 'y']
+    save_csv(rows, csv_columns, output_csv)
 
 if __name__ == '__main__':
-    main()
+
+    vid_path = 'test.mp4'
+    json_path =  'naxu_annotations_for_test.json'
+    config_path = 'annotations_info.json'
+
+    if sys.argv and len(sys.argv) >= 3:
+        vid_path = sys.argv[1]
+        json_path = sys.argv[2]
+    if sys.argv and len(sys.argv) >= 4:
+        config_path = sys.argv[3]
+    
+    main(vid_path, json_path, config_path)
