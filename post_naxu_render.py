@@ -312,7 +312,7 @@ def main(video_path, naxu_json_path, config_json_path):
     cfg = Config(config_json_path)
     
     csv_folder = "naxu_csv"
-    movie_folder = "postrender_naxu"
+    movie_folder = "postnaxu_render"
     
     os.makedirs(movie_folder, exist_ok=True)
     os.makedirs(csv_folder, exist_ok=True)
