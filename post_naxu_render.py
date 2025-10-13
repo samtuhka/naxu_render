@@ -169,7 +169,7 @@ def parse_pairs(marker_df, mask, max_gap, max_show = 20):
             end_display_frame = marker_df.loc[end_i].display_frame
             out.append([start_display_frame, end_display_frame, True])
         else:
-            marker_df.at[start_i, "label"] = '_start_noEnd'
+            marker_df.at[start_i, "label"] += '_start_noEnd'
             start_display_frame =  marker_df.loc[start_i].display_frame
             end_display_frame = start_display_frame + max_show
             out.append([start_display_frame, end_display_frame, False])
