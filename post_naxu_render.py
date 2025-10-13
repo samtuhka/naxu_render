@@ -146,44 +146,46 @@ def read_markers(cfg, markers_json, video_timestamps):
     marker_df = pd.DataFrame(rows, columns=["frame", "time", "display_frame", "label", "x", "y"])
     return marker_df
 
-def parse_pairs(marker_df, mask, max_gap):
+def parse_pairs(marker_df, mask, max_gap, max_show = 20):
     out = []
-    ended = True
-    masked_df = marker_df[mask]
-    idxs = masked_df.index
-    
-    for i in range(len(masked_df)):
-        start_i, end_i = idxs[i-1], idxs[i]
+    ended = False
+    idxs = marker_df[mask].index.tolist()
+    for i in range(len(idxs)):
+        start_i = idxs[i]
+        if i < len(idxs) - 1:
+            end_i = idxs[i+1]
+        else:
+            end_i = idxs[i] 
 
         if ended:
             ended = False
             continue
-        if masked_df.iloc[i].time < masked_df.iloc[i-1].time + max_gap:
+        if start_i != end_i and (marker_df.loc[start_i].time + max_gap > marker_df.loc[end_i].time):
             ended = True
             marker_df.at[start_i, "label"] += '_start'
             marker_df.at[end_i, "label"] += '_end'
 
-            start_display_frame =  marker_df.iloc[i-1].display_frame
-            end_display_frame = marker_df.iloc[i].display_frame
+            start_display_frame =  marker_df.loc[start_i].display_frame
+            end_display_frame = marker_df.loc[end_i].display_frame
             out.append([start_display_frame, end_display_frame, True])
         else:
-            marker_df.at[start_i, "label"] += '_start_noEnd'
-
-            start_display_frame =  marker_df.iloc[i-1].display_frame
-            end_display_frame = start_display_frame + 10
+            marker_df.at[start_i, "label"] = '_start_noEnd'
+            start_display_frame =  marker_df.loc[start_i].display_frame
+            end_display_frame = start_display_frame + max_show
             out.append([start_display_frame, end_display_frame, False])
             
             ended = False
+
     out = pd.DataFrame(out, columns = ["start_frame", "end_frame", "paired"])
     return out
 
 def build_blink_events(cfg, marker_df):
-    blink_mask= marker_df.label == cfg.blink
+    blink_mask = marker_df.label == cfg.blink
     return parse_pairs(marker_df, blink_mask, 0.4)
 
 def build_signal_loss_events(cfg, marker_df):
     signal_loss_mask = marker_df.label == cfg.signal_loss
-    return parse_pairs(marker_df, signal_loss_mask, 1000)
+    return parse_pairs(marker_df, signal_loss_mask, 1000, 240)
 
 def put_time_overlay(img, t, frame):
     cv2.putText(img, f'Time: {t:.2f} s', (100, 100),
@@ -269,8 +271,8 @@ def render_video(cfg, video, markers, blinks, signal_losses, out_path):
         if loss_idx < len(signal_losses):
             loss = signal_losses.iloc[loss_idx]
             if loss.start_frame <= frame_idx <= loss.end_frame:
-                put_text(img, 'SIGNAL LOSS',
-                        (int(0.55*cfg.frame_width), int(0.75*cfg.frame_height)), (150,150,150))
+                put_text(img, 'SIGNAL LOSS'  + ('' if loss.paired else ' (NO END)'),
+                        (int(0.40*cfg.frame_width), int(0.75*cfg.frame_height)), (150,150,150))
             elif frame_idx > loss.end_frame:
                 loss_idx += 1
 
