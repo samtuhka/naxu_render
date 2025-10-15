@@ -317,7 +317,7 @@ def main(video_path, naxu_json_path, config_json_path):
     os.makedirs(movie_folder, exist_ok=True)
     os.makedirs(csv_folder, exist_ok=True)
     
-    time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
     out_video = os.path.join(movie_folder, video_path + f"_postnaxu_render_{time}.mp4")
     output_csv = os.path.join(csv_folder, video_path + f"_naxu_{time}.csv")
 
