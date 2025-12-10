@@ -102,8 +102,8 @@ def get_end_frame_delta(cfg, label):
 
 def get_start_frame_delta(cfg, label):
     return get_display_frames(cfg, label)[0]
-
-def read_markers(cfg, markers_json, video_timestamps):
+    
+def read_markers_legacy(cfg, markers_json, video_timestamps):
     rows = []
 
     for frame in markers_json['markers']:
@@ -139,6 +139,57 @@ def read_markers(cfg, markers_json, video_timestamps):
             if len(d) == 2:  # exactly two markers in this block
                 frame_markers[int(np.argmax(d))][3] += '_launch'
             frame_markers[int(np.argmin(d))][3] += '_land'
+
+    rows.sort(key=lambda r: r[2]) #sort by display time
+    #rows.append([np.inf, '', 0.0, 0.0, 0, np.inf])
+
+    marker_df = pd.DataFrame(rows, columns=["frame", "time", "display_frame", "label", "x", "y"])
+    return marker_df    
+
+def read_markers(cfg, markers_json):
+    rows = []
+    prev_frame_idx = -1
+    landing = None
+    frame_markers, landing = [], None
+            
+    for marker in markers_json['markers']:
+        frame_ts = marker['time']
+        frame_idx = marker['frame']
+        key = marker['marker']
+        pos_x = marker['x']
+        pos_y = marker['y']
+        
+        if frame_idx != prev_frame_idx:
+            # assign launch/land
+            if frame_markers and landing is not None:
+                f_arr = np.asarray(frame_markers)
+                landing_xy = np.asarray(landing[4:], float)
+                d = np.linalg.norm(f_arr[:, 4:].astype(float) - landing_xy, axis=1)
+                if len(d) == 2:  # exactly two markers in this block
+                    frame_markers[int(np.argmax(d))][3] += '_launch'
+                frame_markers[int(np.argmin(d))][3] += '_land'
+        
+            frame_markers, landing = [], None
+        prev_frame_idx = frame_idx
+
+        # skip unused
+        if key in cfg.skip_keys:
+            continue
+
+        frame_disp = frame_idx + get_start_frame_delta(cfg, key) # when frame appears on video, right now same as when annotated
+
+        row = [frame_idx, frame_ts, frame_disp, key, float(pos_x), float(pos_y)]
+
+        if key == cfg.landing_point:        
+            landing = row
+            continue
+
+        rows.append(row)
+
+        if key in cfg.gaze_class_markers:
+            frame_markers.append(row)
+
+
 
     rows.sort(key=lambda r: r[2]) #sort by display time
     #rows.append([np.inf, '', 0.0, 0.0, 0, np.inf])
@@ -321,21 +372,23 @@ def main(video_path, naxu_json_path, config_json_path):
     out_video = os.path.join(movie_folder, video_path + f"_postnaxu_render_{time}.mp4")
     output_csv = os.path.join(csv_folder, video_path + f"_naxu_{time}.csv")
 
-    try:
-        gaze_path = 'gaze_positions.csv'
-        ts_path = 'world_timestamps.csv'
-        gaze         = load_gaze_positions(gaze_path)
-        world_ts     = np.genfromtxt(ts_path, delimiter=',')
-
-        _ = interpolate_gaze(gaze, world_ts)
-    except:
-        print("No gaze data")
-
-    frame_ts = get_frame_timestamps(video_path,
-                                    video_path + ('_ts.npy'))
+    #try:
+    #    gaze_path = 'gaze_positions.csv'
+    #    ts_path = 'world_timestamps.csv'
+    #    gaze         = load_gaze_positions(gaze_path)
+    #    world_ts     = np.genfromtxt(ts_path, delimiter=',')
+    #    _ = interpolate_gaze(gaze, world_ts)
+    #except:
+    #    print("No gaze data")
                                     
     markers_json = load_json(naxu_json_path)
-    markers  = read_markers(cfg, markers_json, frame_ts)
+    
+    if 'markers' in markers_json['markers'][0]:
+        frame_ts = get_frame_timestamps(video_path, video_path + ('_ts.npy'))
+        markers  = read_markers_legacy(cfg, markers_json, frame_ts)
+    else:
+        markers  = read_markers(cfg, markers_json)
+    
     blinks   = build_blink_events(cfg, markers)
     loss     = build_signal_loss_events(cfg, markers)
 
